@@ -22,7 +22,19 @@
   #chat { display:flex; flex-direction:column; gap:8px; }
   #log p { margin:6px 0; }
   form.ask { display:flex; gap:8px; } form.ask input { flex:1; padding:8px; }
-  dialog { border:none; border-radius:8px; padding:16px; max-width:360px; }
+  dialog { border:none; border-radius:8px; padding:16px; max-width:360px; background:var(--card); color:var(--fg); }
+  dialog::backdrop { background:#0006; }
+  .btn + .btn { margin-left:4px; }
+  .btn:disabled { opacity:.5; cursor:default; }
+  details.cat { margin:4px 0 4px 18px; }
+  #tree > details.cat { margin-left:0; }
+  details.cat > summary { cursor:pointer; padding:6px 4px; border-radius:6px; }
+  details.cat > summary:hover { background:#8881; }
+  .cat-name { font-weight:600; }
+  .badge { display:inline-block; font-size:12px; padding:1px 8px; border-radius:999px; margin-left:6px; background:#8882; }
+  .badge.low { background:var(--low); color:var(--lowfg); font-weight:600; }
+  ul.items { margin:2px 0 6px 18px; padding-left:18px; }
+  ul.items li.low { color:var(--lowfg); font-weight:600; }
   [hidden] { display:none !important; }
 </style>
 </head>
@@ -31,6 +43,7 @@
   <h1>Inventario</h1>
   <nav>
     <button data-view="inv" aria-pressed="true">Inventario</button>
+    <button data-view="cat" aria-pressed="false">Categorías</button>
     <button data-view="ord" aria-pressed="false">Órdenes</button>
     <button data-view="ai" aria-pressed="false">Agente IA</button>
   </nav>
@@ -39,13 +52,19 @@
   <p class="msg" id="msg" role="status"></p>
 
   <section id="inv">
-    <table><thead><tr><th>SKU</th><th>Producto</th><th>Stock</th><th>Umbral</th><th>Pend.</th><th></th></tr></thead>
+    <table><thead><tr><th>SKU</th><th>Producto</th><th>Stock</th><th>Umbral</th><th>Pend.</th>
+      <th title="Promedio de las últimas 24 lecturas">Consumo/h</th><th>Se agota en</th><th></th></tr></thead>
       <tbody id="products"></tbody></table>
     <p class="muted">Última actualización: <span id="updated">—</span> <button class="btn" id="refresh">↻ Actualizar</button></p>
   </section>
 
+  <section id="cat" hidden>
+    <p class="muted">Stock, productos bajo umbral, órdenes pendientes y consumo sumados en cada nivel de la bodega.</p>
+    <div id="tree"></div>
+  </section>
+
   <section id="ord" hidden>
-    <table><thead><tr><th>#OC</th><th>SKU</th><th>Cantidad</th><th>Origen</th><th>Estado</th><th>Fecha</th></tr></thead>
+    <table><thead><tr><th>#OC</th><th>SKU</th><th>Cantidad</th><th>Origen</th><th>Estado</th><th>Fecha</th><th></th></tr></thead>
       <tbody id="orders"></tbody></table>
   </section>
 
@@ -58,14 +77,14 @@
   </section>
 </main>
 
-<dialog id="restock">
-  <form method="dialog" id="restockForm">
-    <h3>Pedir reabastecimiento</h3>
-    <p id="rsProduct"></p>
-    <label>Cantidad: <input type="number" id="rsQty" min="1" max="10000" required></label>
-    <p class="muted" id="rsHint"></p>
+<dialog id="qtyDialog" aria-labelledby="dlgTitle">
+  <form method="dialog" id="dlgForm">
+    <h3 id="dlgTitle"></h3>
+    <p id="dlgProduct"></p>
+    <label>Cantidad: <input type="number" id="dlgQty" min="1" max="10000" required></label>
+    <p class="muted" id="dlgHint"></p>
     <button class="btn" value="cancel" formnovalidate>Cancelar</button>
-    <button class="btn primary" value="ok">Encolar</button>
+    <button class="btn primary" value="ok" id="dlgOk"></button>
   </form>
 </dialog>
 
@@ -88,7 +107,11 @@ async function loadProducts() {
   try {
     products = await api("/api/products");
     $("products").innerHTML = products.map(p => `<tr class="${p.low ? "low" : ""}"><td>${esc(p.sku)}</td><td>${esc(p.name)}</td>
-      <td>${p.stock}</td><td>${p.threshold}</td><td>${p.pending_orders}</td><td><button class="btn" data-id="${p.id}">Pedir</button></td></tr>`).join("");
+      <td>${p.stock}</td><td>${p.threshold}</td><td>${p.pending_orders}</td>
+      <td>${p.consumption_per_hour ? p.consumption_per_hour + " u." : "—"}</td>
+      <td>${p.hours_to_stockout != null ? p.hours_to_stockout + " h" : "—"}</td>
+      <td><button class="btn" data-act="restock" data-id="${p.id}">Pedir</button><button class="btn" data-act="dispatch"
+        data-id="${p.id}" ${p.stock ? "" : "disabled"}>Salida</button></td></tr>`).join("");
     $("updated").textContent = new Date().toLocaleTimeString();
     say("");
   } catch { $("products").innerHTML = ""; say("No se pudo cargar el inventario, reintente"); }
@@ -96,9 +119,11 @@ async function loadProducts() {
 async function loadOrders() {
   try {
     const rows = await api("/api/orders");
-    const st = {QUEUED:"EN COLA", ORDERED:"CREADA"};
+    const status = o => o.status === "QUEUED" ? "EN COLA" : o.po_status === "RECEIVED" ? "RECIBIDA" : "CREADA";
     $("orders").innerHTML = rows.map(o => `<tr><td>${o.po_id ?? "—"}</td><td>${esc(o.sku)}</td><td>${o.qty}</td>
-      <td>${o.source === "SCHEDULER" ? "AUTO" : "MANUAL"}</td><td>${st[o.status]}</td><td>${esc(o.created_at)}</td></tr>`).join("");
+      <td>${o.source === "SCHEDULER" ? "AUTO" : "MANUAL"}</td><td>${status(o)}</td><td>${esc(o.created_at)}</td>
+      <td>${o.po_id && o.po_status !== "RECEIVED" ? `<button class="btn" data-po="${o.po_id}" data-sku="${esc(o.sku)}"
+        data-qty="${o.qty}">Recibir</button>` : ""}</td></tr>`).join("");
   } catch (e) { say(e.message); }
 }
 async function loadInsights() {
@@ -107,24 +132,67 @@ async function loadInsights() {
 document.querySelector("nav").onclick = e => {
   const v = e.target.dataset.view; if (!v) return;
   document.querySelectorAll("nav button").forEach(b => b.setAttribute("aria-pressed", b.dataset.view === v));
-  ["inv","ord","ai"].forEach(id => $(id).hidden = id !== v);
-  ({inv:loadProducts, ord:loadOrders, ai:loadInsights})[v]();
+  ["inv","cat","ord","ai"].forEach(id => $(id).hidden = id !== v);
+  ({inv:loadProducts, cat:loadTree, ord:loadOrders, ai:loadInsights})[v]();
 };
 $("refresh").onclick = loadProducts;
-let current;
-$("products").onclick = e => {
-  const id = e.target.dataset.id; if (!id) return;
-  current = products.find(p => p.id == id);
-  $("rsProduct").textContent = `Producto: ${current.sku} · ${current.name}`;
-  $("rsQty").value = current.reorder_qty;
-  $("rsHint").textContent = businessHours() ? `Sugerida: ${current.reorder_qty}` :
-    "ⓘ Fuera de horario hábil: se encolará y procesará el próximo día hábil a las 8:00.";
-  $("restock").showModal();
+// Árbol de categorías con <details> nativo: las ramas con productos bajo umbral se abren solas.
+function renderNode(n, open) {
+  const badges = [`${n.products} prod.`, `${n.stock} u.`, n.pending_orders && `${n.pending_orders} pend.`,
+                  n.consumption_per_hour && `${n.consumption_per_hour} u./h`].filter(Boolean)
+                  .map(t => `<span class="badge">${t}</span>`).join("");
+  const low = n.low ? `<span class="badge low">${n.low} bajo umbral</span>` : "";
+  const items = (n.items || []).map(p => `<li class="${p.low ? "low" : ""}">${esc(p.sku)} · ${esc(p.name)} — ${p.stock} u.</li>`).join("");
+  return `<details class="cat"${open ? " open" : ""}><summary><span class="cat-name">${esc(n.name)}</span>${badges}${low}</summary>
+    ${items && `<ul class="items">${items}</ul>`}${n.children.map(c => renderNode(c, c.low > 0)).join("")}</details>`;
+}
+async function loadTree() {
+  try { $("tree").innerHTML = renderNode(await api("/api/categories/tree"), true); say(""); }
+  catch (e) { $("tree").innerHTML = ""; say(e.message); }
+}
+
+// Un solo diálogo de cantidad para "Pedir" (reabastecimiento) y "Salida" (despacho de bodega).
+const MODES = {
+  restock: {
+    title: "Pedir reabastecimiento", ok: "Encolar", qty: p => p.suggested_qty ?? p.reorder_qty, max: () => 10000,
+    hint: p => businessHours() ? `Sugerida: ${p.suggested_qty ?? p.reorder_qty} (cubre el consumo hasta que llegue el pedido)`
+      : "ⓘ Fuera de horario hábil: se encolará y procesará el próximo día hábil a las 8:00.",
+    send: (p, qty) => api(`/api/products/${p.id}/restock`, {qty}).then(r => r.message),
+  },
+  dispatch: {
+    title: "Registrar salida de bodega", ok: "Registrar salida", qty: () => 1, max: p => Math.min(p.stock, 10000),
+    hint: (p, qty = 1) => `Stock actual: ${p.stock} u. · quedará en ${Math.max(p.stock - qty, 0)}`
+      + (p.stock - qty < p.threshold ? " (bajo el umbral)" : ""),
+    send: (p, qty) => api(`/api/products/${p.id}/dispatch`, {qty}).then(r => `Salida registrada: ${r.sku} queda con ${r.stock} u.`),
+  },
 };
-$("restock").onclose = async () => {
-  if ($("restock").returnValue !== "ok") return;
-  try { say((await api(`/api/products/${current.id}/restock`, {qty: Number($("rsQty").value)})).message); loadProducts(); }
-  catch (e) { say(e.message); }
+let current, mode;
+$("products").onclick = e => {
+  const b = e.target.closest("button[data-act]"); if (!b) return;
+  current = products.find(p => p.id == b.dataset.id); mode = MODES[b.dataset.act];
+  $("dlgTitle").textContent = mode.title; $("dlgOk").textContent = mode.ok;
+  $("dlgProduct").textContent = `Producto: ${current.sku} · ${current.name}`;
+  $("dlgQty").value = mode.qty(current); $("dlgQty").max = mode.max(current);
+  $("dlgHint").textContent = mode.hint(current);
+  $("qtyDialog").showModal();
+};
+$("dlgQty").oninput = () => { if (mode === MODES.dispatch) $("dlgHint").textContent = mode.hint(current, Number($("dlgQty").value)); };
+// "submit" llega al instante; el evento "close" del diálogo se retrasa si la pestaña está en segundo plano.
+$("dlgForm").onsubmit = async e => {
+  if (e.submitter?.value !== "ok") return;  // Cancelar: el diálogo se cierra solo
+  try { const msg = await mode.send(current, Number($("dlgQty").value)); await loadProducts(); say(msg); }
+  catch (err) { say(err.message); }
+};
+
+// Recepción de mercancía: confirma antes, porque suma stock (el backend impide recibir dos veces).
+$("orders").onclick = async e => {
+  const b = e.target.closest("button[data-po]"); if (!b) return;
+  if (!confirm(`¿Llegaron ${b.dataset.qty} u. de ${b.dataset.sku} (orden #${b.dataset.po})? Se sumarán al stock.`)) return;
+  b.disabled = true;
+  try {
+    const o = await api(`/api/orders/${b.dataset.po}/receive`, {});
+    say(`Orden #${o.po_id} recibida: +${o.qty} u. de ${b.dataset.sku}`); loadOrders();
+  } catch (err) { say(err.message); b.disabled = false; }
 };
 $("ask").onsubmit = async e => {
   e.preventDefault();
