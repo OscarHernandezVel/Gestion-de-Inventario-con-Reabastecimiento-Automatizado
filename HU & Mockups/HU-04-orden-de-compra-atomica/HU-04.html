@@ -1,0 +1,200 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>HU-04 · Orden de compra atómica y notificación</title>
+<style>
+:root { --bg:#eef0f4; --card:#fff; --fg:#1d2330; --muted:#6b7280; --line:#e3e6ec;
+        --low:#fde8e8; --lowfg:#9b1c1c; --acc:#1f5fbf; --acc2:#174c99; --ok:#0f7b4b; --okbg:#e3f5ec;
+        --warn:#8a5a00; --warnbg:#fff4d6; --ease:cubic-bezier(.2,.7,.3,1); }
+* { box-sizing:border-box; }
+body { margin:0; padding:24px; font:15px/1.45 "Segoe UI", system-ui, sans-serif; background:var(--bg); color:var(--fg); }
+.win { width:952px; max-width:100%; margin:0 auto; background:var(--card); border-radius:10px; overflow:hidden;
+       box-shadow:0 8px 28px #1d233026; border:1px solid #d5d9e0; animation:rise .4s var(--ease); }
+@keyframes rise { from { opacity:0; transform:translateY(8px); } }
+.chrome { display:flex; align-items:center; gap:8px; padding:10px 14px; background:#e7eaf0; border-bottom:1px solid #d5d9e0; }
+.chrome i { width:12px; height:12px; border-radius:50%; display:inline-block; }
+.chrome i:nth-child(1){background:#f26b5e} .chrome i:nth-child(2){background:#f5bf4f} .chrome i:nth-child(3){background:#5fc454}
+.url { margin-left:12px; flex:1; background:#fff; border-radius:6px; padding:4px 10px; font-size:13px; color:var(--muted); }
+header { display:flex; align-items:center; gap:12px; padding:14px 20px; border-bottom:1px solid var(--line); flex-wrap:wrap; }
+header h1 { font-size:18px; margin:0; flex:1; }
+.tag { font-size:12px; color:var(--muted); }
+nav { display:flex; gap:8px; }
+.btn { display:inline-block; border:1px solid var(--acc); background:none; color:var(--acc); padding:6px 14px; border-radius:6px;
+       font:inherit; font-size:14px; cursor:pointer; text-decoration:none;
+       transition:background .15s, color .15s, transform .1s, box-shadow .15s, opacity .15s; }
+.btn:hover { background:#e9f0fc; }
+.btn:active { transform:scale(.97); }
+.btn.primary, .btn[aria-current=page] { background:var(--acc); color:#fff; }
+.btn.primary:hover, .btn[aria-current=page]:hover { background:var(--acc2); }
+.btn.ghost { border-color:var(--line); color:var(--fg); }
+.btn.ghost:hover { background:#f3f4f7; }
+.btn:disabled { opacity:.45; cursor:not-allowed; transform:none; }
+.btn:focus-visible, input:focus-visible, select:focus-visible, th[data-k]:focus-visible, .chip:focus-visible, tr[tabindex]:focus-visible
+  { outline:2px solid var(--acc); outline-offset:2px; }
+main { padding:20px; }
+h2 { font-size:16px; margin:0 0 12px; }
+table { width:100%; border-collapse:collapse; font-size:14px; }
+th, td { text-align:left; padding:9px 10px; border-bottom:1px solid var(--line); transition:background .2s; }
+th { color:var(--muted); font-weight:600; font-size:13px; user-select:none; }
+th[data-k] { cursor:pointer; }
+th[data-k]:hover { color:var(--fg); }
+th[aria-sort=ascending]::after { content:" ▲"; font-size:10px; }
+th[aria-sort=descending]::after { content:" ▼"; font-size:10px; }
+tbody tr:hover td { background:#f6f8fb; }
+td.n, th.n { text-align:right; font-variant-numeric:tabular-nums; }
+tr.low td, tr.low:hover td { background:var(--low); color:var(--lowfg); font-weight:600; }
+tr.flash td { animation:flash 1.2s; }
+@keyframes flash { 0%,40% { background:#dbe8fb; } }
+tr.sel td { background:#e9f0fc; }
+.muted { color:var(--muted); font-size:13px; }
+.row { display:flex; gap:16px; flex-wrap:wrap; }
+.card { border:1px solid var(--line); border-radius:8px; padding:14px; flex:1; min-width:240px; transition:box-shadow .2s, transform .2s; }
+.card:hover { box-shadow:0 4px 14px #1d23301a; }
+.pill { display:inline-block; padding:2px 9px; border-radius:999px; font-size:12px; font-weight:600; transition:background .25s, color .25s; }
+.pill.ok { background:var(--okbg); color:var(--ok); }
+.pill.warn { background:var(--warnbg); color:var(--warn); }
+.pill.err { background:var(--low); color:var(--lowfg); }
+.pill.info { background:#e6eefb; color:var(--acc); }
+.banner { padding:10px 14px; border-radius:8px; font-size:14px; }
+.banner.err { background:var(--low); color:var(--lowfg); }
+.banner.warn { background:var(--warnbg); color:var(--warn); }
+.banner.ok { background:var(--okbg); color:var(--ok); }
+.toolbar { display:flex; align-items:center; gap:10px; margin-bottom:12px; flex-wrap:wrap; }
+.toolbar h2 { flex:1; margin:0; }
+.sim { display:flex; align-items:center; gap:10px; flex-wrap:wrap; background:#f6f7f9; border:1px dashed #c9ced8;
+       border-radius:8px; padding:8px 12px; margin-bottom:16px; font-size:14px; }
+.sim b { font-size:12px; text-transform:uppercase; letter-spacing:.04em; color:var(--muted); }
+input, select { font:inherit; padding:7px 10px; border:1px solid #c9ced8; border-radius:6px; background:#fff; transition:border-color .15s; }
+input[aria-invalid=true] { border-color:var(--lowfg); background:#fff8f8; }
+input[type=range] { padding:0; accent-color:var(--acc); }
+input[type=checkbox] { accent-color:var(--acc); }
+.kpi { font-size:26px; font-weight:700; font-variant-numeric:tabular-nums; transition:color .3s; }
+.chip { border:1px solid var(--line); background:#fff; border-radius:999px; padding:4px 12px; font:inherit; font-size:13px; cursor:pointer; transition:all .15s; }
+.chip:hover { border-color:var(--acc); }
+.chip[aria-pressed=true] { background:var(--acc); border-color:var(--acc); color:#fff; }
+.hidden { display:none !important; }
+.spin { display:inline-block; animation:spin .8s linear infinite; }
+@keyframes spin { to { transform:rotate(360deg); } }
+.toast { position:fixed; left:50%; bottom:24px; transform:translate(-50%, 20px); opacity:0; padding:10px 16px; border-radius:8px;
+         background:#1d2330; color:#fff; font-size:14px; box-shadow:0 8px 24px #0004; transition:all .3s var(--ease); z-index:10; max-width:90vw; }
+.toast.show { opacity:1; transform:translate(-50%, 0); }
+.toast.warn { background:#6b4700; } .toast.err { background:#7f1d1d; }
+dialog { border:1px solid var(--line); border-radius:10px; padding:20px; width:460px; max-width:92vw; box-shadow:0 12px 40px #1d233040; }
+dialog[open] { animation:pop .2s var(--ease); }
+dialog::backdrop { background:#1d233040; }
+@keyframes pop { from { opacity:0; transform:scale(.96); } }
+.err-msg { color:var(--lowfg); font-size:13px; min-height:18px; }
+@media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation:none !important; transition:none !important; } }
+</style>
+</head>
+<body>
+<div class="win">
+<div class="chrome"><i></i><i></i><i></i><span class="url">https://inventario.example.com/ordenes</span></div>
+<header><h1>Inventario · Ferretería</h1><span class="tag">Comprador</span><nav><a class="btn"  href="../HU-01-consultar-stock/HU-01.html">Inventario</a><a class="btn" aria-current="page" href="../HU-04-orden-de-compra-atomica/HU-04.html">Órdenes</a><a class="btn"  href="../HU-06-agente-inventario/HU-06.html">Agente IA</a></nav></header>
+<main>
+
+<div class="toolbar"><h2>Órdenes de compra</h2>
+<div role="group" aria-label="Filtrar por estado" id="chips">
+<button class="chip" aria-pressed="true" data-f="">Todas</button><button class="chip" aria-pressed="false" data-f="CREADA">Creadas</button>
+<button class="chip" aria-pressed="false" data-f="EN COLA">En cola</button><button class="chip" aria-pressed="false" data-f="REINTENTO">Reintento</button></div></div>
+<table id="tbl"><thead><tr><th data-k="po">#OC</th><th data-k="sku">SKU</th><th class="n" data-k="qty">Cantidad</th><th data-k="src">Origen</th>
+<th data-k="st">Estado</th><th data-k="at">Fecha</th></tr></thead><tbody></tbody></table>
+<div class="row" style="margin-top:20px">
+<div class="card"><div class="muted">Correo recibido por el comprador (SNS) · clic en una fila</div>
+<div id="mail"></div></div>
+<div class="card"><div class="muted">Garantía de consistencia · transacción</div>
+<ol id="steps" style="margin:8px 0;padding-left:20px;font-size:14px">
+<li>START TRANSACTION · SELECT solicitud FOR UPDATE</li><li>UPDATE pending_orders − 1</li><li>INSERT purchase_orders</li>
+<li>UPDATE solicitud → ORDENADA · publicar SNS</li><li>COMMIT</li></ol>
+<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+<span class="muted">pending_orders de SKU-005:</span><span class="kpi" id="pend" style="font-size:20px">1</span>
+<button class="btn" id="fail">Simular fallo a mitad</button><button class="btn ghost" id="okrun">Simular éxito</button></div>
+<div class="muted" id="txmsg" aria-live="polite" style="margin-top:6px">Si algo falla: ROLLBACK, nada cambia y el mensaje vuelve a la cola (máx. 3, luego DLQ).</div></div>
+</div>
+
+</main>
+</div>
+<script>
+const $ = (s, r = document) => r.querySelector(s), $$ = (s, r = document) => [...r.querySelectorAll(s)];
+function toast(msg, kind = '') {
+  const t = Object.assign(document.createElement('div'), { className: 'toast ' + kind, textContent: msg });
+  t.setAttribute('role', 'status'); document.body.append(t);
+  requestAnimationFrame(() => t.classList.add('show'));
+  setTimeout(() => { t.classList.remove('show'); setTimeout(() => t.remove(), 300); }, 2800);
+}
+const DAYS = ['Dom', 'Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb'];
+const inHours = (d, h) => d >= 1 && d <= 5 && h >= 8 && h < 18;  // L-V 08:00-18:00
+function nextRun(d, h) {  // próxima revisión a la hora en punto, L-V 08-17
+  for (let i = 1; i <= 24 * 7; i++) {
+    const hh = (h + i) % 24, dd = (d + Math.floor((h + i) / 24)) % 7;
+    if (dd >= 1 && dd <= 5 && hh >= 8 && hh <= 17) return (i < 24 - h ? 'Hoy ' : DAYS[dd] + ' ') + String(hh).padStart(2, '0') + ':00';
+  }
+}
+function sortable(table, render) {  // clic en encabezado con data-k ordena; render(key, dir)
+  $$('th[data-k]', table).forEach(th => {
+    th.tabIndex = 0;
+    const go = () => {
+      const dir = th.getAttribute('aria-sort') === 'ascending' ? 'descending' : 'ascending';
+      $$('th', table).forEach(x => x.removeAttribute('aria-sort')); th.setAttribute('aria-sort', dir);
+      render(th.dataset.k, dir === 'ascending' ? 1 : -1);
+    };
+    th.onclick = go; th.onkeydown = e => (e.key === 'Enter' || e.key === ' ') && (e.preventDefault(), go());
+  });
+}
+
+
+const ORDERS = [
+  { po: 1043, sku: 'SKU-004', qty: 50, src: 'AUTO', st: 'CREADA', at: '14/11 10:00', req: 'a91e…' },
+  { po: 1042, sku: 'SKU-002', qty: 200, src: 'AUTO', st: 'CREADA', at: '14/11 09:01', req: '7f3c…' },
+  { po: null, sku: 'SKU-003', qty: 250, src: 'MANUAL', st: 'EN COLA', at: '11/11 21:13' },
+  { po: null, sku: 'SKU-005', qty: 100, src: 'MANUAL', st: 'REINTENTO 2/3', at: '14/11 09:40' },
+];
+const PILL = { CREADA: 'ok', 'EN COLA': 'warn' };
+let filter = '', key = 'at', dir = -1, sel = 1042, retries = 2;
+function render() {
+  const rows = ORDERS.filter(o => o.st.startsWith(filter)).sort((a, b) => (String(a[key]) > String(b[key]) ? 1 : -1) * dir);
+  $('#tbl tbody').innerHTML = rows.map(o => `<tr tabindex="0" data-i="${ORDERS.indexOf(o)}" class="${o.po === sel && o.po ? 'sel' : ''}">
+    <td>${o.po ?? '—'}</td><td>${o.sku}</td><td class="n">${o.qty}</td><td>${o.src}</td>
+    <td><span class="pill ${PILL[o.st] || 'err'}">${o.st}</span></td><td>${o.at}</td></tr>`).join('');
+}
+function showMail(o) {
+  sel = o.po; render();
+  $('#mail').innerHTML = o.po ? `<div style="margin-top:8px;font-weight:600">Orden de compra #${o.po} - ${o.sku}</div>
+    <pre style="background:#f6f7f9;border-radius:6px;padding:10px;font-size:13px;margin:8px 0 0;white-space:pre-wrap">${JSON.stringify(
+      { po_id: o.po, sku: o.sku, quantity: o.qty, request_id: o.req, created_at: o.at }, null, 1)}</pre>`
+    : `<p class="muted" style="margin-top:10px">${o.sku}: aún no hay orden de compra, así que no se ha enviado correo.</p>`;
+}
+const pick = e => { const tr = e.target.closest('tr[data-i]'); if (tr) showMail(ORDERS[tr.dataset.i]); };
+$('#tbl').onclick = pick; $('#tbl').onkeydown = e => e.key === 'Enter' && pick(e);
+$('#chips').onclick = e => { const c = e.target.closest('.chip'); if (!c) return;
+  $$('.chip').forEach(x => x.setAttribute('aria-pressed', x === c)); filter = c.dataset.f; render(); };
+sortable($('#tbl'), (k, d) => { key = k; dir = d; render(); });
+
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+async function tx(fail) {
+  const o = ORDERS[3]; if (o.st === 'CREADA' || o.st === 'EN DLQ') return toast(o.st === 'CREADA' ? 'SKU-005 ya tiene su orden' : 'SKU-005 agotó sus 3 intentos y está en la DLQ', 'warn');
+  $$('#fail, #okrun').forEach(b => b.disabled = true);
+  const li = $$('#steps li'); li.forEach(x => x.style.color = '');
+  for (let i = 0; i < li.length; i++) {
+    await sleep(450);
+    if (fail && i === 2) {
+      li[i].style.color = 'var(--lowfg)'; $('#txmsg').textContent = '✗ Fallo antes de crear la orden → ROLLBACK';
+      await sleep(600); $('#pend').textContent = 1; li.forEach(x => x.style.color = 'var(--muted)');
+      retries++; o.st = retries > 3 ? 'EN DLQ' : `REINTENTO ${retries}/3`;
+      $('#txmsg').textContent = `pending_orders volvió a 1 y no se creó orden. El mensaje vuelve a la cola (${o.st}).`;
+      toast('ROLLBACK: los datos quedaron como antes', 'err'); break;
+    }
+    li[i].style.color = 'var(--ok)'; if (i === 1) $('#pend').textContent = 0;
+    if (i === 4) { Object.assign(o, { po: 1044, st: 'CREADA', at: '14/11 10:05', req: 'c27d…' }); showMail(o);
+      $('#txmsg').textContent = 'COMMIT: orden #1044 creada, pending_orders = 0 y correo enviado.'; toast('Orden #1044 creada y notificada'); }
+  }
+  $$('#fail, #okrun').forEach(b => b.disabled = false); render();
+}
+$('#fail').onclick = () => tx(true); $('#okrun').onclick = () => tx(false);
+render(); showMail(ORDERS[1]);
+
+</script>
+</body>
+</html>
