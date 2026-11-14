@@ -1,0 +1,140 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Inventario</title>
+<style>
+  :root { --bg:#f6f7f9; --card:#fff; --fg:#1d2330; --muted:#6b7280; --low:#fde8e8; --lowfg:#9b1c1c; --acc:#1f5fbf; }
+  @media (prefers-color-scheme: dark) { :root { --bg:#12151b; --card:#1b2029; --fg:#e6e8ec; --muted:#9aa3b2; --low:#3b1d1d; --lowfg:#fca5a5; --acc:#6ea0ff; } }
+  body { margin:0; font:15px/1.4 system-ui, sans-serif; background:var(--bg); color:var(--fg); }
+  header { display:flex; gap:12px; align-items:center; padding:12px 16px; background:var(--card); border-bottom:1px solid #8883; }
+  header h1 { font-size:18px; margin:0 auto 0 0; }
+  nav button, .btn { border:1px solid var(--acc); background:none; color:var(--acc); padding:6px 12px; border-radius:6px; cursor:pointer; }
+  nav button[aria-pressed=true], .btn.primary { background:var(--acc); color:#fff; }
+  main { max-width:960px; margin:16px auto; padding:0 16px; }
+  section { background:var(--card); border-radius:8px; padding:12px; overflow-x:auto; }
+  table { width:100%; border-collapse:collapse; }
+  th, td { text-align:left; padding:8px; border-bottom:1px solid #8882; white-space:nowrap; }
+  tr.low td { background:var(--low); color:var(--lowfg); font-weight:600; }
+  .muted { color:var(--muted); font-size:13px; }
+  .msg { margin:8px 0; min-height:1.4em; }
+  #chat { display:flex; flex-direction:column; gap:8px; }
+  #log p { margin:6px 0; }
+  form.ask { display:flex; gap:8px; } form.ask input { flex:1; padding:8px; }
+  dialog { border:none; border-radius:8px; padding:16px; max-width:360px; }
+  [hidden] { display:none !important; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Inventario</h1>
+  <nav>
+    <button data-view="inv" aria-pressed="true">Inventario</button>
+    <button data-view="ord" aria-pressed="false">Órdenes</button>
+    <button data-view="ai" aria-pressed="false">Agente IA</button>
+  </nav>
+</header>
+<main>
+  <p class="msg" id="msg" role="status"></p>
+
+  <section id="inv">
+    <table><thead><tr><th>SKU</th><th>Producto</th><th>Stock</th><th>Umbral</th><th>Pend.</th><th></th></tr></thead>
+      <tbody id="products"></tbody></table>
+    <p class="muted">Última actualización: <span id="updated">—</span> <button class="btn" id="refresh">↻ Actualizar</button></p>
+  </section>
+
+  <section id="ord" hidden>
+    <table><thead><tr><th>#OC</th><th>SKU</th><th>Cantidad</th><th>Origen</th><th>Estado</th><th>Fecha</th></tr></thead>
+      <tbody id="orders"></tbody></table>
+  </section>
+
+  <section id="ai" hidden>
+    <div id="chat">
+      <div id="log" aria-live="polite"></div>
+      <form class="ask" id="ask"><input id="question" maxlength="1000" placeholder="Escribe tu pregunta..." aria-label="Pregunta" required><button class="btn primary">Enviar</button></form>
+      <h3>Alertas recientes</h3><ul id="insights"></ul>
+    </div>
+  </section>
+</main>
+
+<dialog id="restock">
+  <form method="dialog" id="restockForm">
+    <h3>Pedir reabastecimiento</h3>
+    <p id="rsProduct"></p>
+    <label>Cantidad: <input type="number" id="rsQty" min="1" max="10000" required></label>
+    <p class="muted" id="rsHint"></p>
+    <button class="btn" value="cancel" formnovalidate>Cancelar</button>
+    <button class="btn primary" value="ok">Encolar</button>
+  </form>
+</dialog>
+
+<script>
+const $ = id => document.getElementById(id);
+const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const say = t => $("msg").textContent = t;
+async function api(path, opts) {
+  const r = await fetch(path, opts && {method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify(opts)});
+  const data = await r.json();
+  if (!r.ok) throw new Error(data.error || "Error");
+  return data;
+}
+function businessHours() {
+  const d = new Date(new Date().toLocaleString("en-US", {timeZone:"America/Bogota"}));
+  return d.getDay() >= 1 && d.getDay() <= 5 && d.getHours() >= 8 && d.getHours() < 18;
+}
+let products = [];
+async function loadProducts() {
+  try {
+    products = await api("/api/products");
+    $("products").innerHTML = products.map(p => `<tr class="${p.low ? "low" : ""}"><td>${esc(p.sku)}</td><td>${esc(p.name)}</td>
+      <td>${p.stock}</td><td>${p.threshold}</td><td>${p.pending_orders}</td><td><button class="btn" data-id="${p.id}">Pedir</button></td></tr>`).join("");
+    $("updated").textContent = new Date().toLocaleTimeString();
+    say("");
+  } catch { $("products").innerHTML = ""; say("No se pudo cargar el inventario, reintente"); }
+}
+async function loadOrders() {
+  try {
+    const rows = await api("/api/orders");
+    const st = {QUEUED:"EN COLA", ORDERED:"CREADA"};
+    $("orders").innerHTML = rows.map(o => `<tr><td>${o.po_id ?? "—"}</td><td>${esc(o.sku)}</td><td>${o.qty}</td>
+      <td>${o.source === "SCHEDULER" ? "AUTO" : "MANUAL"}</td><td>${st[o.status]}</td><td>${esc(o.created_at)}</td></tr>`).join("");
+  } catch (e) { say(e.message); }
+}
+async function loadInsights() {
+  try { $("insights").innerHTML = (await api("/api/insights")).map(i => `<li>⚠ ${esc(i.severity)} ${esc(i.summary)}</li>`).join(""); } catch {}
+}
+document.querySelector("nav").onclick = e => {
+  const v = e.target.dataset.view; if (!v) return;
+  document.querySelectorAll("nav button").forEach(b => b.setAttribute("aria-pressed", b.dataset.view === v));
+  ["inv","ord","ai"].forEach(id => $(id).hidden = id !== v);
+  ({inv:loadProducts, ord:loadOrders, ai:loadInsights})[v]();
+};
+$("refresh").onclick = loadProducts;
+let current;
+$("products").onclick = e => {
+  const id = e.target.dataset.id; if (!id) return;
+  current = products.find(p => p.id == id);
+  $("rsProduct").textContent = `Producto: ${current.sku} · ${current.name}`;
+  $("rsQty").value = current.reorder_qty;
+  $("rsHint").textContent = businessHours() ? `Sugerida: ${current.reorder_qty}` :
+    "ⓘ Fuera de horario hábil: se encolará y procesará el próximo día hábil a las 8:00.";
+  $("restock").showModal();
+};
+$("restock").onclose = async () => {
+  if ($("restock").returnValue !== "ok") return;
+  try { say((await api(`/api/products/${current.id}/restock`, {qty: Number($("rsQty").value)})).message); loadProducts(); }
+  catch (e) { say(e.message); }
+};
+$("ask").onsubmit = async e => {
+  e.preventDefault();
+  const q = $("question").value.trim(); if (!q) return;
+  $("log").insertAdjacentHTML("beforeend", `<p><b>Tú:</b> ${esc(q)}</p>`);
+  $("question").value = "";
+  try { $("log").insertAdjacentHTML("beforeend", `<p><b>Agente:</b> ${esc((await api("/api/agent", {question:q})).answer)}</p>`); }
+  catch (err) { $("log").insertAdjacentHTML("beforeend", `<p class="muted">${esc(err.message)}</p>`); }
+};
+loadProducts();
+</script>
+</body>
+</html>
