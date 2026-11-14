@@ -1,0 +1,139 @@
+@startuml clases-capas
+!pragma layout smetana
+title Backend de inventario: modelo por capas (Controller / Service / Repository)
+hide empty members
+skinparam packageStyle rectangle
+skinparam classAttributeIconSize 0
+
+package "Presentación" {
+  class "api.route" as Api <<Controller>> {
+    +route(method, path, query, body): (int, dict)
+  }
+  class "handlers" as Handlers <<Controller>> {
+    +checker_handler(event, ctx)
+    +consumer_handler(event, ctx)
+  }
+  class "agent" as Agent <<Controller>> {
+    +handler(event, ctx)
+  }
+  class dto <<DTO>> {
+    +product_dto(p): dict
+    +tree_dto(node): dict
+    +status_for(error): int
+  }
+}
+
+package "Negocio" {
+  class InventoryService <<Service>> {
+    +list_products(): Product[*]
+    +category_tree(): CategoryNode
+    +dispatch(productId, qty): Product
+    +record_readings(): int
+  }
+  class RestockService <<Service>> {
+    +scan_low_stock(): ScanResult
+    +request_restock(productId, source, qty): RestockTicket
+  }
+  class PurchaseOrderService <<Service>> {
+    +create_from_request(requestId, failMidway): PurchaseOrder
+    +receive(orderId): PurchaseOrder
+  }
+  class InsightService <<Service>>
+}
+
+package "Puertos" {
+  interface UnitOfWork {
+    products: ProductRepository
+    requests: RestockRequestRepository
+    orders: PurchaseOrderRepository
+    categories: CategoryRepository
+  }
+  interface ProductRepository
+  interface RestockRequestRepository
+  interface PurchaseOrderRepository
+  interface CategoryRepository
+  interface RestockQueue
+  interface OrderNotifier
+}
+
+package "Datos / Infraestructura" {
+  class MySqlUnitOfWork
+  class SqsRestockQueue
+  class SnsOrderNotifier
+}
+
+package "Dominio" {
+  class Product <<Entidad>> {
+    stock: int
+    threshold: int
+    pendingOrders: int
+    +needs_auto_restock(): bool
+    +suggested_qty(): int
+    +dispatch(qty)
+    +receive(qty)
+  }
+  class RestockRequest <<Entidad>> {
+    +{static} create(product, source, qty)
+    +mark_ordered()
+  }
+  class PurchaseOrder <<Entidad>> {
+    +{static} from_request(request, product)
+    +receive(product)
+  }
+  class CategoryNode <<Árbol>> {
+    +walk(): Iterator
+    +summary(): dict
+    +path(): str[*]
+  }
+  class "CircularBuffer<T>" as CircularBuffer <<Buffer circular>> {
+    capacity: int
+    head: int
+    +append(value): int
+  }
+  class StockHistory {
+    +consumption_per_hour(): float
+    +hours_to_stockout(stock): float
+  }
+  class BusinessCalendar <<Valor>> {
+    +is_open(now): bool
+    +next_opening(now): datetime
+  }
+}
+
+Api ..> InventoryService : usa
+Api ..> RestockService : usa
+Api ..> PurchaseOrderService : usa
+Api ..> dto : usa
+Handlers ..> RestockService : usa
+Handlers ..> PurchaseOrderService : usa
+Agent ..> InventoryService : usa
+Agent ..> InsightService : usa
+
+InventoryService --> UnitOfWork
+RestockService --> UnitOfWork
+RestockService --> RestockQueue
+RestockService --> BusinessCalendar
+PurchaseOrderService --> UnitOfWork
+PurchaseOrderService --> OrderNotifier
+
+UnitOfWork *-- ProductRepository
+UnitOfWork *-- RestockRequestRepository
+UnitOfWork *-- PurchaseOrderRepository
+UnitOfWork *-- CategoryRepository
+
+MySqlUnitOfWork ..|> UnitOfWork
+SqsRestockQueue ..|> RestockQueue
+SnsOrderNotifier ..|> OrderNotifier
+
+CategoryNode "0..1" *-- "0..*" CategoryNode : hijos
+CategoryNode "1" o-- "0..*" Product : agrupa
+Product "1" *-- "1" StockHistory : historial
+StockHistory --|> CircularBuffer
+RestockRequest "0..*" --> "1" Product : repone
+PurchaseOrder "0..1" --> "1" RestockRequest : atiende
+
+note bottom of CircularBuffer
+  24 ranuras fijas; slot = head % capacity.
+  Persistido en stock_readings (product_id, slot).
+end note
+@enduml

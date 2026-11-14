@@ -1,0 +1,34 @@
+@startuml secuencia-reabastecimiento-manual
+title Caso de uso «Solicitar reabastecimiento manual» (cualquier horario)
+autonumber
+actor "Encargado de bodega" as A
+participant "NGINX" as X
+participant "api.route" as C
+participant "dto" as D
+participant "RestockService" as S
+participant "MySqlUnitOfWork" as U
+participant "RestockRequest" as R
+participant "SqsRestockQueue" as Q
+participant "BusinessCalendar" as K
+database "RDS (vía Proxy)" as DB
+
+A -> X : POST /api/products/2/restock {"qty": 50}
+X -> C : proxy_pass 127.0.0.1:8080
+C -> D : qty_from(body)
+alt cantidad fuera de 1..10000
+  C --> A : 400 {"error": "Cantidad entre 1 y 10000"}
+end
+C -> S : request_restock(2, MANUAL, 50)
+S -> U : products.get(2, for_update)
+alt no existe
+  C --> A : 404
+end
+S -> R : create(product, MANUAL, 50)
+S -> U : products.save / requests.add
+S -> Q : send(request)
+U -> DB : COMMIT
+S -> K : is_open(now) / next_opening(now)
+S --> C : RestockTicket
+C --> A : 202 "Solicitud encolada" o "se procesará el lunes 08:00"
+note over Q : Fuera de horario el consumidor está deshabilitado:\nel mensaje espera en SQS (retención 14 días).
+@enduml

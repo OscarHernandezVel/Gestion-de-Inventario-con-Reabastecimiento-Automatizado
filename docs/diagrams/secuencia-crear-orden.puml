@@ -1,0 +1,46 @@
+@startuml secuencia-crear-orden
+title Caso de uso «Crear orden de compra» (consumidor SQS, transacción atómica)
+autonumber
+participant "SQS" as Q
+participant "handlers.consumer_handler" as H
+participant "PurchaseOrderService" as S
+participant "MySqlUnitOfWork" as U
+participant "RestockRequest" as R
+participant "Product" as P
+participant "PurchaseOrder" as O
+participant "SnsOrderNotifier" as N
+database "RDS (vía Proxy)" as DB
+
+Q -> H : lote de hasta 10 mensajes (long polling 20 s)
+loop por cada mensaje
+  H -> S : create_from_request(requestId)
+  activate S
+  S -> U : __enter__()
+  U -> DB : START TRANSACTION
+  S -> U : requests.get_queued(id, for_update)
+  U -> DB : SELECT ... WHERE status='QUEUED' FOR UPDATE
+  alt solicitud ya procesada (mensaje duplicado)
+    S --> H : None (idempotente)
+  else en cola
+    S -> U : products.get(productId, for_update)
+    S -> O : from_request(request, product)
+    O -> R : mark_ordered()
+    O -> P : release_restock()
+    S -> U : products.save(product)
+    U -> DB : UPDATE products SET pending_orders
+    S -> U : orders.add(order)
+    U -> DB : INSERT purchase_orders
+    S -> U : requests.save(request)
+    U -> DB : UPDATE restock_requests SET status='ORDERED'
+    S -> N : notify(order, product)
+    U -> DB : COMMIT
+    S --> H : PurchaseOrder
+  end
+  deactivate S
+  alt cualquier excepción
+    U -> DB : ROLLBACK
+    H -> H : agrega messageId a batchItemFailures
+  end
+end
+H --> Q : {batchItemFailures: [...]} (solo los fallidos vuelven a la cola)
+@enduml

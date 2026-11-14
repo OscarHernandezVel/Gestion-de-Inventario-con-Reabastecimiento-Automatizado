@@ -1,0 +1,29 @@
+@startuml secuencia-consultar-inventario
+title Caso de uso «Consultar inventario por categorías» (árbol + buffer circular)
+autonumber
+actor "Gerente / Encargado" as A
+participant "api.route" as C
+participant "InventoryService" as S
+participant "MySqlUnitOfWork" as U
+participant "build_category_tree" as T
+participant "CategoryNode" as N
+participant "dto" as D
+database "RDS (vía Proxy)" as DB
+
+A -> C : GET /api/categories/tree
+C -> S : category_tree()
+S -> U : categories.list_all()
+U -> DB : SELECT id, name, parent_id FROM categories
+S -> U : products.list_all()
+U -> DB : SELECT products + stock_readings
+U --> S : Product[*] con su StockHistory
+S -> T : build(categories, products)
+alt ciclo, varias raíces o padre inexistente
+  T --> C : CategoryCycle → 422
+end
+T --> S : raíz «Bodega»
+S --> C : CategoryNode
+C -> D : tree_dto(raíz)
+D -> N : summary() en cada nodo (stock, bajo umbral, pendientes, consumo/h)
+C --> A : 200 árbol JSON con agregados por nivel
+@enduml

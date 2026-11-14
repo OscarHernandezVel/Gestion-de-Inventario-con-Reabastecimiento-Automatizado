@@ -1,0 +1,40 @@
+@startuml secuencia-revisar-stock
+title Caso de uso «Revisar stock» (EventBridge Scheduler, L-V 8-17 h)
+autonumber
+participant "EventBridge" as E
+participant "handlers.checker_handler" as H
+participant "InventoryService" as I
+participant "RestockService" as S
+participant "MySqlUnitOfWork" as U
+participant "Product" as P
+participant "SqsRestockQueue" as Q
+database "RDS (vía Proxy)" as DB
+
+E -> H : cron(0 8-17 ? * MON-FRI *)
+H -> I : record_readings()
+I -> U : products.list_all()
+loop por producto
+  I -> P : record_reading(now)
+  note right : buffer circular: slot = head % 24
+  I -> U : products.append_reading(product, slot)
+  U -> DB : INSERT ... ON DUPLICATE KEY UPDATE / UPDATE history_head
+end
+U -> DB : COMMIT
+H -> S : scan_low_stock()
+S -> U : products.find_needing_restock()
+U -> DB : SELECT id WHERE stock < threshold AND pending_orders = 0
+loop por producto bajo umbral (transacción propia)
+  S -> U : products.get(id, for_update)
+  S -> P : needs_auto_restock()
+  alt ya tiene solicitud pendiente
+    S --> S : omitido (no duplica)
+  else
+    S -> P : suggested_qty()
+    note right : consumo/hora × tiempo de entrega + umbral − stock
+    S -> U : requests.add(request)
+    S -> Q : send(request)
+    U -> DB : COMMIT
+  end
+end
+H --> E : métricas EMF LowStock / Enqueued / EnqueueFailed
+@enduml
