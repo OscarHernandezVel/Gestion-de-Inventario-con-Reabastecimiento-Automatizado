@@ -1,0 +1,4 @@
+# boto3 ya viene en el runtime de Lambda; se fija aquí para que el paquete no dependa de esa versión.
+pymysql==1.1.1
+anthropic[bedrock]==2.8.0
+boto3==1.40.0
